@@ -23,10 +23,11 @@ local LOCALHOST = "localhost"
 local LOCALHOST_IP = "127.0.0.1"
 
 -- Converts every occurence of "localhost" to "127.0.0.1"
--- @param host can either be a string or an array of hosts
+-- @param `host`  A string or an array of hosts
+-- @return `host` The normalized host (127.0.0.1)
 local function normalize_localhost(host)
   if type(host) == "table" then
-    for i,v in ipairs(host) do
+    for i, v in ipairs(host) do
       if v == LOCALHOST then
         host[i] = LOCALHOST_IP
       end
@@ -37,8 +38,8 @@ local function normalize_localhost(host)
   return host
 end
 
--- Instanciate a Cassandra DAO.
--- @param properties Cassandra properties
+-- Instanciate DAOs for collections.
+-- @param `properties` Cassandra properties defined in kong.yml
 function CassandraFactory:new(properties)
   self.type = "cassandra"
   self._properties = properties
@@ -56,6 +57,7 @@ function CassandraFactory:new(properties)
   self.keyauth_credentials = KeyAuthCredentials(properties)
 end
 
+-- Drop the database. Erase all data without erasing the schema.
 function CassandraFactory:drop()
   return self:execute_queries [[
     TRUNCATE apis;
@@ -67,15 +69,13 @@ function CassandraFactory:drop()
   ]]
 end
 
--- Prepare all statements of collections `._queries` property and put them
--- in a statements cache
---
+-- Prepare queries of collections `._queries` property through
+-- the base_dao `prepare_kong_statement()` method.
 -- Note:
--- Even if the BaseDAO's :_execute_kong_query() method support preparation of statements on-the-go,
--- this method should be called when Kong starts in order to detect any failure in advance
--- as well as test the connection to Cassandra.
---
--- @return error if any
+--   Even if the BaseDAO's :_execute_kong_query() method support preparation of statements
+--   on-the-go, this method should be called when Kong starts in order to detect any failure
+--   in advance and for performance reasons.
+-- @return `error` Error if any during execution
 function CassandraFactory:prepare()
   local function prepare_collection(collection, collection_queries)
     if not collection_queries then collection_queries = collection._queries end
@@ -107,9 +107,10 @@ end
 
 -- Execute a string of queries separated by ;
 -- Useful for huge DDL operations such as migrations
--- @param {string} queries Semicolon separated string of queries
--- @param {boolean} no_keyspace Won't set the keyspace if true
--- @return {string} error if any
+-- @param `queries`     Semicolon separated string of queries
+-- @param `no_keyspace` Won't set the keyspace for this query if true.
+--                      Useful for the first migration query which created the keyspace.
+-- @return `error`      Error if any
 function CassandraFactory:execute_queries(queries, no_keyspace)
   local ok, err
   local session = cassandra.new()
@@ -149,11 +150,12 @@ end
 local MIGRATION_IDENTIFIER = "migrations"
 
 -- Create a cassandra session and execute a query on given keyspace or default one (from properties).
--- @param query Query or prepared statement given to session:execute
--- @param args List of arguments given to session:execute
--- @param keyspace Optional: overrides properties keyspace if specified
--- @return query result
--- @return error if any
+-- Will `:close()` the session instead of putting it back in the socket pool like the base_dao
+-- @param `query`    Query or prepared statement given to session:execute
+-- @param `args`     List of arguments given to session:execute
+-- @param `keyspace` Optional. overrides properties keyspace if specified
+-- @return `results` Results of the query
+-- @return `error`   Error if any during execution
 function CassandraFactory:execute(query, args, keyspace)
   local ok, err
   local session = cassandra.new()
@@ -180,18 +182,19 @@ function CassandraFactory:execute(query, args, keyspace)
   return ok
 end
 
--- Log (add) given migration to schema_migrations table.
--- @param migration_name Name of the migration to log
--- @return query result
--- @return error if any
+-- Log (add) given migration to the schema_migrations table.
+-- @param `migration_name` Name of the migration to log
+-- @return `results`       Results of the query
+-- @return `error`         Error if any during execution
 function CassandraFactory:add_migration(migration_name)
   return self:execute("UPDATE schema_migrations SET migrations = migrations + ? WHERE id = ?",
                       { cassandra.list({ migration_name }), MIGRATION_IDENTIFIER })
 end
 
--- Return all logged migrations if any. Check if keyspace exists before to avoid error during the first migration.
--- @return A list of previously executed migration (as strings)
--- @return error if any
+-- Return all logged migrations if any. Check if keyspace exists before to avoid error
+-- if checking before the first migration.
+-- @return `migrations` A list of previously executed migration (as strings)
+-- @return `error`      Error if any during execution
 function CassandraFactory:get_migrations()
   local rows, err
 
@@ -212,8 +215,8 @@ function CassandraFactory:get_migrations()
 end
 
 -- Unlog (delete) given migration from the schema_migrations table.
--- @return query result
--- @return error if any
+-- @return `results` Results of the query
+-- @return `error`   Error if any during execution
 function CassandraFactory:delete_migration(migration_name)
   return self:execute("UPDATE schema_migrations SET migrations = migrations - ? WHERE id = ?",
                       { cassandra.list({ migration_name }), MIGRATION_IDENTIFIER })
